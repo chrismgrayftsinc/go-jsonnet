@@ -396,6 +396,68 @@ func builtinJoin(i *interpreter, sep, arrv value) (value, error) {
 	}
 }
 
+func builtinFoldl(i *interpreter, funcv, arrv, initv value) (value, error) {
+	fun, err := i.getFunction(funcv)
+	if err != nil {
+		return nil, err
+	}
+	var numElements int
+	var elements []*cachedThunk
+	switch arrType := arrv.(type) {
+	case valueString:
+		for _, item := range arrType.getRunes() {
+			elements = append(elements, readyThunk(makeStringFromRunes([]rune{item})))
+		}
+		numElements = len(elements)
+	case *valueArray:
+		numElements = arrType.length()
+		elements = arrType.elements
+	default:
+		return nil, i.Error("foldl second parameter should be string or array, got " + arrType.getType().name)
+	}
+
+	accValue := initv
+	for counter := 0; counter < numElements; counter++ {
+		accValue, err = fun.call(i, args([]*cachedThunk{readyThunk(accValue), elements[counter]}...))
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return accValue, nil
+}
+
+func builtinFoldr(i *interpreter, funcv, arrv, initv value) (value, error) {
+	fun, err := i.getFunction(funcv)
+	if err != nil {
+		return nil, err
+	}
+	var numElements int
+	var elements []*cachedThunk
+	switch arrType := arrv.(type) {
+	case valueString:
+		for _, item := range arrType.getRunes() {
+			elements = append(elements, readyThunk(makeStringFromRunes([]rune{item})))
+		}
+		numElements = len(elements)
+	case *valueArray:
+		numElements = arrType.length()
+		elements = arrType.elements
+	default:
+		return nil, i.Error("foldr second parameter should be string or array, got " + arrType.getType().name)
+	}
+
+	accValue := initv
+	for counter := numElements - 1; counter >= 0; counter-- {
+		accValue, err = fun.call(i, args([]*cachedThunk{elements[counter], readyThunk(accValue)}...))
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return accValue, nil
+}
+
 func builtinReverse(i *interpreter, arrv value) (value, error) {
 	arr, err := i.getArray(arrv)
 	if err != nil {
@@ -991,6 +1053,11 @@ func builtinSubstr(i *interpreter, inputStr, inputFrom, inputLen value) (value, 
 		return nil, makeRuntimeError(msg, i.getCurrentStackTrace())
 	}
 
+	if fromV.value < 0 {
+		msg := fmt.Sprintf("substr second parameter should be greater than zero, got %f", fromV.value)
+		return nil, makeRuntimeError(msg, i.getCurrentStackTrace())
+	}
+
 	lenV, err := i.getNumber(inputLen)
 	if err != nil {
 		msg := fmt.Sprintf("substr third parameter should be a number, got %s", inputLen.getType().name)
@@ -1381,7 +1448,7 @@ type builtin interface {
 }
 
 func flattenArgs(args callArguments, params []namedParameter, defaults []value) []*cachedThunk {
-	positions := make(map[ast.Identifier]int)
+	positions := make(map[ast.Identifier]int, len(params))
 	for i, param := range params {
 		positions[param.name] = i
 	}
@@ -1601,11 +1668,23 @@ var uopBuiltins = []*unaryBuiltin{
 }
 
 func buildBuiltinMap(builtins []builtin) map[string]evalCallable {
-	result := make(map[string]evalCallable)
+	result := make(map[string]evalCallable, len(builtins))
 	for _, b := range builtins {
 		result[string(b.Name())] = b
 	}
 	return result
+}
+
+func builtinParseInt(i *interpreter, x value) (value, error) {
+	str, err := i.getString(x)
+	if err != nil {
+		return nil, err
+	}
+	res, err := strconv.ParseInt(str.getGoString(), 10, 64)
+	if err != nil {
+		return nil, i.Error(fmt.Sprintf("%s is not a base 10 integer", str.getGoString()))
+	}
+	return makeValueNumber(float64(res)), nil
 }
 
 var funcBuiltins = buildBuiltinMap([]builtin{
@@ -1619,6 +1698,8 @@ var funcBuiltins = buildBuiltinMap([]builtin{
 	&binaryBuiltin{name: "join", function: builtinJoin, params: ast.Identifiers{"sep", "arr"}},
 	&unaryBuiltin{name: "reverse", function: builtinReverse, params: ast.Identifiers{"arr"}},
 	&binaryBuiltin{name: "filter", function: builtinFilter, params: ast.Identifiers{"func", "arr"}},
+	&ternaryBuiltin{name: "foldl", function: builtinFoldl, params: ast.Identifiers{"func", "arr", "init"}},
+	&ternaryBuiltin{name: "foldr", function: builtinFoldr, params: ast.Identifiers{"func", "arr", "init"}},
 	&binaryBuiltin{name: "range", function: builtinRange, params: ast.Identifiers{"from", "to"}},
 	&binaryBuiltin{name: "primitiveEquals", function: primitiveEquals, params: ast.Identifiers{"x", "y"}},
 	&binaryBuiltin{name: "equals", function: builtinEquals, params: ast.Identifiers{"x", "y"}},
@@ -1648,6 +1729,7 @@ var funcBuiltins = buildBuiltinMap([]builtin{
 	&ternaryBuiltin{name: "strReplace", function: builtinStrReplace, params: ast.Identifiers{"str", "from", "to"}},
 	&unaryBuiltin{name: "base64Decode", function: builtinBase64Decode, params: ast.Identifiers{"str"}},
 	&unaryBuiltin{name: "base64DecodeBytes", function: builtinBase64DecodeBytes, params: ast.Identifiers{"str"}},
+	&unaryBuiltin{name: "parseInt", function: builtinParseInt, params: ast.Identifiers{"str"}},
 	&unaryBuiltin{name: "parseJson", function: builtinParseJSON, params: ast.Identifiers{"str"}},
 	&unaryBuiltin{name: "parseYaml", function: builtinParseYAML, params: ast.Identifiers{"str"}},
 	&generalBuiltin{name: "manifestJsonEx", function: builtinManifestJSONEx, params: []generalBuiltinParameter{{name: "value"}, {name: "indent"},
