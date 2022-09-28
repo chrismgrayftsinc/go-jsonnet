@@ -36,6 +36,10 @@ func Benchmark_Builtin_reverse(b *testing.B) {
 	RunBenchmark(b, "reverse")
 }
 
+func Benchmark_Builtin_parseInt(b *testing.B) {
+	RunBenchmark(b, "parseInt")
+}
+
 func Benchmark_Builtin_base64Decode(b *testing.B) {
 	RunBenchmark(b, "base64Decode")
 }
@@ -62,4 +66,8 @@ func Benchmark_Builtin_comparison(b *testing.B) {
 
 func Benchmark_Builtin_comparison2(b *testing.B) {
 	RunBenchmark(b, "comparison2")
+}
+
+func Benchmark_Builtin_foldl(b *testing.B) {
+	RunBenchmark(b, "foldl")
 }
