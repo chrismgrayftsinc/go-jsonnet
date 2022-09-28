@@ -23,6 +23,7 @@ def jsonnet_go_dependencies():
         name = "com_github_fatih_color",
         importpath = "github.com/fatih/color",
         sum = "h1:mRhaKNwANqRgUBGKmnI5ZxEk7QXmjQeCcuYFMX2bfcc=",
+        build_external = "external",
         version = "v1.12.0",
     )
 
@@ -48,12 +49,14 @@ def jsonnet_go_dependencies():
         name = "com_github_mattn_go_colorable",
         importpath = "github.com/mattn/go-colorable",
         sum = "h1:c1ghPdyEDarC70ftn0y+A/Ee++9zz8ljHG1b13eJ0s8=",
+        build_external = "external",
         version = "v0.1.8",
     )
     go_repository(
         name = "com_github_mattn_go_isatty",
         importpath = "github.com/mattn/go-isatty",
         sum = "h1:wuysRhFDzyxgEmMf5xjvJ2M9dZoWAXNNr5LSBS7uHXY=",
+        build_external = "external",
         version = "v0.0.12",
     )
     go_repository(
