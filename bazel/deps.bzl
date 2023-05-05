@@ -25,6 +25,7 @@ def jsonnet_go_dependencies():
         sum = "h1:mRhaKNwANqRgUBGKmnI5ZxEk7QXmjQeCcuYFMX2bfcc=",
         build_external = "external",
         version = "v1.12.0",
+        build_external = "external",
     )
 
     go_repository(
@@ -51,6 +52,7 @@ def jsonnet_go_dependencies():
         sum = "h1:c1ghPdyEDarC70ftn0y+A/Ee++9zz8ljHG1b13eJ0s8=",
         build_external = "external",
         version = "v0.1.8",
+        build_external = "external",
     )
     go_repository(
         name = "com_github_mattn_go_isatty",
@@ -58,6 +60,7 @@ def jsonnet_go_dependencies():
         sum = "h1:wuysRhFDzyxgEmMf5xjvJ2M9dZoWAXNNr5LSBS7uHXY=",
         build_external = "external",
         version = "v0.0.12",
+        build_external = "external",
     )
     go_repository(
         name = "com_github_pmezard_go_difflib",
@@ -104,6 +107,6 @@ def jsonnet_go_dependencies():
     go_repository(
         name = "org_golang_x_sys",
         importpath = "golang.org/x/sys",
-        sum = "h1:/WDfKMnPU+m5M4xB+6x4kaepxRw6jWvR5iDRdvjHgy8=",
-        version = "v0.0.0-20200223170610-d5e6a3e2c0ae",
+        sum = "h1:kunALQeHf1/185U1i0GOB/fy1IPRDDpuoOOqRReG57U=",
+        version = "v0.1.0",
     )

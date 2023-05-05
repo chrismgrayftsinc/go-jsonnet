@@ -260,9 +260,9 @@ func builtinTrace(i *interpreter, x value, y value) (value, error) {
 // time.  It is equivalent to `local i = 42; func(i)`.  It therefore has no
 // free variables and needs only an empty environment to execute.
 type astMakeArrayElement struct {
-	ast.NodeBase
 	function *valueFunction
-	index    int
+	ast.NodeBase
+	index int
 }
 
 func builtinMakeArray(i *interpreter, szv, funcv value) (value, error) {
@@ -504,12 +504,117 @@ func builtinFilter(i *interpreter, funcv, arrv value) (value, error) {
 	}
 	return makeValueArray(elems), nil
 }
+func builtinLstripChars(i *interpreter, str, chars value) (value, error) {
+	switch strType := str.(type) {
+	case valueString:
+		if strType.length() > 0 {
+			index, err := strType.index(i, 0)
+			if err != nil {
+				return nil, err
+			}
+			member, err := rawMember(i, chars, index)
+			if err != nil {
+				return nil, err
+			}
+			if member {
+				runes := strType.getRunes()
+				s := string(runes[1:])
+				return builtinLstripChars(i, makeValueString(s), chars)
+			} else {
+				return str, nil
+			}
+		}
+		return str, nil
+	default:
+		return nil, i.Error(fmt.Sprintf("Unexpected type %s, expected string", strType.getType().name))
+	}
+}
+
+func builtinRstripChars(i *interpreter, str, chars value) (value, error) {
+	switch strType := str.(type) {
+	case valueString:
+		if strType.length() > 0 {
+			index, err := strType.index(i, strType.length()-1)
+			if err != nil {
+				return nil, err
+			}
+			member, err := rawMember(i, chars, index)
+			if err != nil {
+				return nil, err
+			}
+			if member {
+				runes := strType.getRunes()
+				s := string(runes[:len(runes)-1])
+				return builtinRstripChars(i, makeValueString(s), chars)
+			} else {
+				return str, nil
+			}
+		}
+		return str, nil
+	default:
+		return nil, i.Error(fmt.Sprintf("Unexpected type %s, expected string", strType.getType().name))
+	}
+}
+
+func builtinStripChars(i *interpreter, str, chars value) (value, error) {
+	lstripChars, err := builtinLstripChars(i, str, chars)
+	if err != nil {
+		return nil, err
+	}
+	rstripChars, err := builtinRstripChars(i, lstripChars, chars)
+	if err != nil {
+		return nil, err
+	}
+	return rstripChars, nil
+}
+
+func rawMember(i *interpreter, arrv, value value) (bool, error) {
+	switch arrType := arrv.(type) {
+	case valueString:
+		valString, err := i.getString(value)
+		if err != nil {
+			return false, err
+		}
+
+		arrString, err := i.getString(arrv)
+		if err != nil {
+			return false, err
+		}
+
+		return strings.Contains(arrString.getGoString(), valString.getGoString()), nil
+	case *valueArray:
+		for _, elem := range arrType.elements {
+			cachedThunkValue, err := elem.getValue(i)
+			if err != nil {
+				return false, err
+			}
+			equal, err := rawEquals(i, cachedThunkValue, value)
+			if err != nil {
+				return false, err
+			}
+			if equal {
+				return true, nil
+			}
+		}
+	default:
+		return false, i.Error("std.member first argument must be an array or a string")
+	}
+	return false, nil
+}
+
+func builtinMember(i *interpreter, arrv, value value) (value, error) {
+	eq, err := rawMember(i, arrv, value)
+	if err != nil {
+		return nil, err
+	}
+	return makeValueBoolean(eq), nil
+}
 
 type sortData struct {
+	err    error
 	i      *interpreter
 	thunks []*cachedThunk
 	keys   []value
-	err    error
 }
 
 func (d *sortData) Len() int {
@@ -597,6 +702,30 @@ func builtinNegation(i *interpreter, x value) (value, error) {
 		return nil, err
 	}
 	return makeValueBoolean(!b.value), nil
+}
+
+func builtinXnor(i *interpreter, xv, yv value) (value, error) {
+	p, err := i.getBoolean(xv)
+	if err != nil {
+		return nil, err
+	}
+	q, err := i.getBoolean(yv)
+	if err != nil {
+		return nil, err
+	}
+	return makeValueBoolean(p.value == q.value), nil
+}
+
+func builtinXor(i *interpreter, xv, yv value) (value, error) {
+	p, err := i.getBoolean(xv)
+	if err != nil {
+		return nil, err
+	}
+	q, err := i.getBoolean(yv)
+	if err != nil {
+		return nil, err
+	}
+	return makeValueBoolean(p.value != q.value), nil
 }
 
 func builtinBitNeg(i *interpreter, x value) (value, error) {
@@ -955,6 +1084,7 @@ var builtinExponent = liftNumeric(func(f float64) float64 {
 	_, exponent := math.Frexp(f)
 	return float64(exponent)
 })
+var builtinRound = liftNumeric(math.Round)
 
 func liftBitwise(f func(int64, int64) int64, positiveRightArg bool) func(*interpreter, value, value) (value, error) {
 	return func(i *interpreter, xv, yv value) (value, error) {
@@ -1077,7 +1207,7 @@ func builtinSubstr(i *interpreter, inputStr, inputFrom, inputLen value) (value, 
 	}
 
 	fromInt := int(fromV.value)
-	strStr := strV.getGoString()
+	strStr := strV.getRunes()
 
 	endIndex := fromInt + lenInt
 
@@ -1088,9 +1218,7 @@ func builtinSubstr(i *interpreter, inputStr, inputFrom, inputLen value) (value, 
 	if fromInt > len(strStr) {
 		return makeValueString(""), nil
 	}
-
-	runes := []rune(strStr)
-	return makeValueString(string(runes[fromInt:endIndex])), nil
+	return makeValueString(string(strStr[fromInt:endIndex])), nil
 }
 
 func builtinSplitLimit(i *interpreter, strv, cv, maxSplitsV value) (value, error) {
@@ -1111,8 +1239,8 @@ func builtinSplitLimit(i *interpreter, strv, cv, maxSplitsV value) (value, error
 	}
 	sStr := str.getGoString()
 	sC := c.getGoString()
-	if len(sC) != 1 {
-		return nil, i.Error(fmt.Sprintf("std.splitLimit second parameter should have length 1, got %v", len(sC)))
+	if len(sC) < 1 {
+		return nil, i.Error(fmt.Sprintf("std.splitLimit second parameter should have length 1 or greater, got %v", len(sC)))
 	}
 
 	// the convention is slightly different from strings.splitN in Go (the meaning of non-negative values is shifted by one)
@@ -1150,6 +1278,15 @@ func builtinStrReplace(i *interpreter, strv, fromv, tov value) (value, error) {
 		return nil, i.Error("'from' string must not be zero length.")
 	}
 	return makeValueString(strings.Replace(sStr, sFrom, sTo, -1)), nil
+}
+
+func builtinIsEmpty(i *interpreter, strv value) (value, error) {
+	str, err := i.getString(strv)
+	if err != nil {
+		return nil, err
+	}
+	sStr := str.getGoString()
+	return makeValueBoolean(len(sStr) == 0), nil
 }
 
 func base64DecodeGoBytes(i *interpreter, str string) ([]byte, error) {
@@ -1269,8 +1406,6 @@ func builtinParseYAML(i *interpreter, str value) (value, error) {
 	}
 	s := sval.getGoString()
 
-	isYamlStream := strings.Contains(s, "---")
-
 	elems := []interface{}{}
 	d := NewYAMLToJSONDecoder(strings.NewReader(s))
 	for {
@@ -1284,7 +1419,7 @@ func builtinParseYAML(i *interpreter, str value) (value, error) {
 		elems = append(elems, elem)
 	}
 
-	if isYamlStream {
+	if d.IsStream() {
 		return jsonToValue(i, elems)
 	}
 	return jsonToValue(i, elems[0])
@@ -1300,6 +1435,348 @@ func jsonEncode(v interface{}) (string, error) {
 	}
 
 	return strings.TrimRight(buf.String(), "\n"), nil
+}
+
+// tomlIsSection checks whether an object or array is a section - a TOML section is an
+// object or an an array has all of its children being objects
+func tomlIsSection(i *interpreter, val value) (bool, error) {
+	switch v := val.(type) {
+	case *valueObject:
+		return true, nil
+	case *valueArray:
+		if v.length() == 0 {
+			return false, nil
+		}
+
+		for _, thunk := range v.elements {
+			thunkValue, err := thunk.getValue(i)
+			if err != nil {
+				return false, err
+			}
+
+			switch thunkValue.(type) {
+			case *valueObject:
+				// this is expected, return true if all children are objects
+			default:
+				// return false if at least one child is not an object
+				return false, nil
+			}
+		}
+
+		return true, nil
+	default:
+		return false, nil
+	}
+}
+
+// tomlEncodeString encodes a string as quoted TOML string
+func tomlEncodeString(s string) string {
+	res := "\""
+
+	for _, c := range s {
+		// escape specific characters, rendering non-ASCII ones as \uXXXX,
+		// appending remaining characters as is
+		if c == '"' {
+			res = res + "\\\""
+		} else if c == '\\' {
+			res = res + "\\\\"
+		} else if c == '\b' {
+			res = res + "\\b"
+		} else if c == '\f' {
+			res = res + "\\f"
+		} else if c == '\n' {
+			res = res + "\\n"
+		} else if c == '\r' {
+			res = res + "\\r"
+		} else if c == '\t' {
+			res = res + "\\t"
+		} else if c < 32 || (c >= 127 && c <= 159) {
+			res = res + fmt.Sprintf("\\u%04x", c)
+		} else {
+			res = res + string(c)
+		}
+	}
+
+	res = res + "\""
+
+	return res
+}
+
+// tomlEncodeKey encodes a key - returning same string if it does not need quoting,
+// otherwise return it quoted; returns empty key as ”
+func tomlEncodeKey(s string) string {
+	bareAllowed := true
+
+	// for empty string, return ''
+	if len(s) == 0 {
+		return "''"
+	}
+
+	for _, c := range s {
+		if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_' {
+			continue
+		}
+
+		bareAllowed = false
+		break
+	}
+
+	if bareAllowed {
+		return s
+	}
+	return tomlEncodeString(s)
+}
+
+func tomlAddToPath(path []string, tail string) []string {
+	result := make([]string, 0, len(path)+1)
+	result = append(result, path...)
+	result = append(result, tail)
+	return result
+}
+
+// tomlRenderValue returns a rendered value as string, with proper indenting
+func tomlRenderValue(i *interpreter, val value, sindent string, indexedPath []string, inline bool, cindent string) (string, error) {
+	switch v := val.(type) {
+	case *valueNull:
+		return "", i.Error(fmt.Sprintf("Tried to manifest \"null\" at %v", indexedPath))
+	case *valueBoolean:
+		return fmt.Sprintf("%t", v.value), nil
+	case *valueNumber:
+		return unparseNumber(v.value), nil
+	case valueString:
+		return tomlEncodeString(v.getGoString()), nil
+	case *valueFunction:
+		return "", i.Error(fmt.Sprintf("Tried to manifest function at %v", indexedPath))
+	case *valueArray:
+		if len(v.elements) == 0 {
+			return "[]", nil
+		}
+
+		// initialize indenting and separators based on whether this is added inline or not
+		newIndent := cindent + sindent
+		separator := "\n"
+		if inline {
+			newIndent = ""
+			separator = " "
+		}
+
+		// open the square bracket to start array values
+		res := "[" + separator
+
+		// iterate over elents and add their values to result
+		for j, thunk := range v.elements {
+			thunkValue, err := thunk.getValue(i)
+			if err != nil {
+				return "", err
+			}
+
+			childIndexedPath := tomlAddToPath(indexedPath, strconv.FormatInt(int64(j), 10))
+
+			if j > 0 {
+				res = res + "," + separator
+			}
+
+			res = res + newIndent
+			value, err := tomlRenderValue(i, thunkValue, sindent, childIndexedPath, true, "")
+			if err != nil {
+				return "", err
+			}
+			res = res + value
+		}
+
+		res = res + separator
+		if inline {
+			res = res + cindent
+		}
+
+		// close the array and return it
+		res = res + "]"
+
+		return res, nil
+	case *valueObject:
+		res := ""
+
+		fields := objectFields(v, withoutHidden)
+		sort.Strings(fields)
+
+		// iterate over sorted field keys and render their values
+		for j, fieldName := range fields {
+			fieldValue, err := v.index(i, fieldName)
+			if err != nil {
+				return "", err
+			}
+
+			childIndexedPath := tomlAddToPath(indexedPath, fieldName)
+
+			value, err := tomlRenderValue(i, fieldValue, sindent, childIndexedPath, true, "")
+			if err != nil {
+				return "", err
+			}
+
+			if j > 0 {
+				res = res + ", "
+			}
+			res = res + tomlEncodeKey(fieldName) + " = " + value
+		}
+
+		// wrap fields in an array
+		return "{ " + res + " }", nil
+	default:
+		return "", i.Error(fmt.Sprintf("Unknown object type %v at %v", reflect.TypeOf(v), indexedPath))
+	}
+}
+
+func tomlRenderTableArray(i *interpreter, v *valueArray, sindent string, path []string, indexedPath []string, cindent string) (string, error) {
+
+	sections := make([]string, 0, len(v.elements))
+
+	// render all elements of an array
+	for j, thunk := range v.elements {
+		thunkValue, err := thunk.getValue(i)
+		if err != nil {
+			return "", err
+		}
+
+		switch tv := thunkValue.(type) {
+		case *valueObject:
+			// render the entire path as section name
+			section := cindent + "[["
+
+			for i, element := range path {
+				if i > 0 {
+					section = section + "."
+				}
+				section = section + tomlEncodeKey(element)
+			}
+
+			section = section + "]]"
+
+			// add newline if the table has elements
+			if len(objectFields(tv, withoutHidden)) > 0 {
+				section = section + "\n"
+			}
+
+			childIndexedPath := tomlAddToPath(indexedPath, strconv.FormatInt(int64(j), 10))
+
+			// render the table and add it to result
+			table, err := tomlTableInternal(i, tv, sindent, path, childIndexedPath, cindent+sindent)
+			if err != nil {
+				return "", err
+			}
+			section = section + table
+
+			sections = append(sections, section)
+		default:
+			return "", i.Error(fmt.Sprintf("invalid type for section: %v", reflect.TypeOf(thunkValue)))
+		}
+	}
+
+	// combine all sections
+	return strings.Join(sections, "\n\n"), nil
+}
+
+func tomlRenderTable(i *interpreter, v *valueObject, sindent string, path []string, indexedPath []string, cindent string) (string, error) {
+	res := cindent + "["
+	for i, element := range path {
+		if i > 0 {
+			res = res + "."
+		}
+		res = res + tomlEncodeKey(element)
+	}
+	res = res + "]"
+	if len(objectFields(v, withoutHidden)) > 0 {
+		res = res + "\n"
+	}
+
+	table, err := tomlTableInternal(i, v, sindent, path, indexedPath, cindent+sindent)
+	if err != nil {
+		return "", err
+	}
+	res = res + table
+
+	return res, nil
+}
+
+func tomlTableInternal(i *interpreter, v *valueObject, sindent string, path []string, indexedPath []string, cindent string) (string, error) {
+	resFields := []string{}
+	resSections := []string{""}
+	fields := objectFields(v, withoutHidden)
+	sort.Strings(fields)
+
+	// iterate over non-section items
+	for _, fieldName := range fields {
+		fieldValue, err := v.index(i, fieldName)
+		if err != nil {
+			return "", err
+		}
+
+		isSection, err := tomlIsSection(i, fieldValue)
+		if err != nil {
+			return "", err
+		}
+
+		childIndexedPath := tomlAddToPath(indexedPath, fieldName)
+
+		if isSection {
+			// render as section and add to array of sections
+
+			childPath := tomlAddToPath(path, fieldName)
+
+			switch fv := fieldValue.(type) {
+			case *valueObject:
+				section, err := tomlRenderTable(i, fv, sindent, childPath, childIndexedPath, cindent)
+				if err != nil {
+					return "", err
+				}
+				resSections = append(resSections, section)
+			case *valueArray:
+				section, err := tomlRenderTableArray(i, fv, sindent, childPath, childIndexedPath, cindent)
+				if err != nil {
+					return "", err
+				}
+				resSections = append(resSections, section)
+			default:
+				return "", i.Error(fmt.Sprintf("invalid type for section: %v", reflect.TypeOf(fieldValue)))
+			}
+		} else {
+			// render as value and append to result fields
+
+			renderedValue, err := tomlRenderValue(i, fieldValue, sindent, childIndexedPath, false, "")
+			if err != nil {
+				return "", err
+			}
+			resFields = append(resFields, strings.Split(tomlEncodeKey(fieldName)+" = "+renderedValue, "\n")...)
+		}
+	}
+
+	// create the result string
+	res := ""
+
+	if len(resFields) > 0 {
+		res = "" + cindent
+	}
+	res = res + strings.Join(resFields, "\n"+cindent) + strings.Join(resSections, "\n\n")
+	return res, nil
+}
+
+func builtinManifestTomlEx(i *interpreter, arguments []value) (value, error) {
+	val := arguments[0]
+	vindent, err := i.getString(arguments[1])
+	if err != nil {
+		return nil, err
+	}
+	sindent := vindent.getGoString()
+
+	switch v := val.(type) {
+	case *valueObject:
+		res, err := tomlTableInternal(i, v, sindent, []string{}, []string{}, "")
+		if err != nil {
+			return nil, err
+		}
+		return makeValueString(res), nil
+	default:
+		return nil, i.Error(fmt.Sprintf("TOML body must be an object. Got %s", v.getType().name))
+	}
 }
 
 // We have a very similar logic here /interpreter.go@v0.16.0#L695 and here: /interpreter.go@v0.16.0#L627
@@ -1428,6 +1905,42 @@ func builtinExtVar(i *interpreter, name value) (value, error) {
 	return nil, i.Error("Undefined external variable: " + string(index))
 }
 
+func builtinMinArray(i *interpreter, arguments []value) (value, error) {
+	arrv := arguments[0]
+	keyFv := arguments[1]
+
+	arr, err := i.getArray(arrv)
+	if err != nil {
+		return nil, err
+	}
+	keyF, err := i.getFunction(keyFv)
+	if err != nil {
+		return nil, err
+	}
+	num := arr.length()
+	if num == 0 {
+		return nil, i.Error("Expected at least one element in array. Got none")
+	}
+	minVal, err := keyF.call(i, args(arr.elements[0]))
+	if err != nil {
+		return nil, err
+	}
+	for index := 1; index < num; index++ {
+		current, err := keyF.call(i, args(arr.elements[index]))
+		if err != nil {
+			return nil, err
+		}
+		cmp, err := valueCmp(i, minVal, current)
+		if err != nil {
+			return nil, err
+		}
+		if cmp > 0 {
+			minVal = current
+		}
+	}
+	return minVal, nil
+}
+
 func builtinNative(i *interpreter, name value) (value, error) {
 	str, err := i.getString(name)
 	if err != nil {
@@ -1438,6 +1951,43 @@ func builtinNative(i *interpreter, name value) (value, error) {
 		return &valueFunction{ec: f}, nil
 	}
 	return &valueNull{}, nil
+}
+
+func builtinSum(i *interpreter, arrv value) (value, error) {
+	arr, err := i.getArray(arrv)
+	if err != nil {
+		return nil, err
+	}
+	sum := 0.0
+	for _, elem := range arr.elements {
+		elemValue, err := i.evaluateNumber(elem)
+		if err != nil {
+			return nil, err
+		}
+		sum += elemValue.value
+	}
+	return makeValueNumber(sum), nil
+}
+
+func builtinContains(i *interpreter, arrv value, ev value) (value, error) {
+	arr, err := i.getArray(arrv)
+	if err != nil {
+		return nil, err
+	}
+	for _, elem := range arr.elements {
+		val, err := elem.getValue(i)
+		if err != nil {
+			return nil, err
+		}
+		eq, err := rawEquals(i, val, ev)
+		if err != nil {
+			return nil, err
+		}
+		if eq {
+			return makeValueBoolean(true), nil
+		}
+	}
+	return makeValueBoolean(false), nil
 }
 
 // Utils for builtins - TODO(sbarzowski) move to a separate file in another commit
@@ -1575,10 +2125,10 @@ func (b *ternaryBuiltin) Name() ast.Identifier {
 type generalBuiltinFunc func(*interpreter, []value) (value, error)
 
 type generalBuiltinParameter struct {
-	name ast.Identifier
 	// Note that the defaults are passed as values rather than AST nodes like in Parameters.
 	// This spares us unnecessary evaluation.
 	defaultValue value
+	name         ast.Identifier
 }
 
 // generalBuiltin covers cases that other builtin structures do not,
@@ -1587,8 +2137,8 @@ type generalBuiltinParameter struct {
 // at the same index.
 type generalBuiltin struct {
 	name     ast.Identifier
-	params   []generalBuiltinParameter
 	function generalBuiltinFunc
+	params   []generalBuiltinParameter
 }
 
 func (b *generalBuiltin) parameters() []namedParameter {
@@ -1700,6 +2250,7 @@ var funcBuiltins = buildBuiltinMap([]builtin{
 	&binaryBuiltin{name: "filter", function: builtinFilter, params: ast.Identifiers{"func", "arr"}},
 	&ternaryBuiltin{name: "foldl", function: builtinFoldl, params: ast.Identifiers{"func", "arr", "init"}},
 	&ternaryBuiltin{name: "foldr", function: builtinFoldr, params: ast.Identifiers{"func", "arr", "init"}},
+	&binaryBuiltin{name: "member", function: builtinMember, params: ast.Identifiers{"arr", "x"}},
 	&binaryBuiltin{name: "range", function: builtinRange, params: ast.Identifiers{"from", "to"}},
 	&binaryBuiltin{name: "primitiveEquals", function: primitiveEquals, params: ast.Identifiers{"x", "y"}},
 	&binaryBuiltin{name: "equals", function: builtinEquals, params: ast.Identifiers{"x", "y"}},
@@ -1721,12 +2272,19 @@ var funcBuiltins = buildBuiltinMap([]builtin{
 	&unaryBuiltin{name: "exp", function: builtinExp, params: ast.Identifiers{"x"}},
 	&unaryBuiltin{name: "mantissa", function: builtinMantissa, params: ast.Identifiers{"x"}},
 	&unaryBuiltin{name: "exponent", function: builtinExponent, params: ast.Identifiers{"x"}},
+	&unaryBuiltin{name: "round", function: builtinRound, params: ast.Identifiers{"x"}},
 	&binaryBuiltin{name: "pow", function: builtinPow, params: ast.Identifiers{"x", "n"}},
 	&binaryBuiltin{name: "modulo", function: builtinModulo, params: ast.Identifiers{"x", "y"}},
 	&unaryBuiltin{name: "md5", function: builtinMd5, params: ast.Identifiers{"s"}},
+	&binaryBuiltin{name: "xnor", function: builtinXnor, params: ast.Identifiers{"x", "y"}},
+	&binaryBuiltin{name: "xor", function: builtinXor, params: ast.Identifiers{"x", "y"}},
+	&binaryBuiltin{name: "lstripChars", function: builtinLstripChars, params: ast.Identifiers{"str", "chars"}},
+	&binaryBuiltin{name: "rstripChars", function: builtinRstripChars, params: ast.Identifiers{"str", "chars"}},
+	&binaryBuiltin{name: "stripChars", function: builtinStripChars, params: ast.Identifiers{"str", "chars"}},
 	&ternaryBuiltin{name: "substr", function: builtinSubstr, params: ast.Identifiers{"str", "from", "len"}},
 	&ternaryBuiltin{name: "splitLimit", function: builtinSplitLimit, params: ast.Identifiers{"str", "c", "maxsplits"}},
 	&ternaryBuiltin{name: "strReplace", function: builtinStrReplace, params: ast.Identifiers{"str", "from", "to"}},
+	&unaryBuiltin{name: "isEmpty", function: builtinIsEmpty, params: ast.Identifiers{"str"}},
 	&unaryBuiltin{name: "base64Decode", function: builtinBase64Decode, params: ast.Identifiers{"str"}},
 	&unaryBuiltin{name: "base64DecodeBytes", function: builtinBase64DecodeBytes, params: ast.Identifiers{"str"}},
 	&unaryBuiltin{name: "parseInt", function: builtinParseInt, params: ast.Identifiers{"str"}},
@@ -1735,11 +2293,15 @@ var funcBuiltins = buildBuiltinMap([]builtin{
 	&generalBuiltin{name: "manifestJsonEx", function: builtinManifestJSONEx, params: []generalBuiltinParameter{{name: "value"}, {name: "indent"},
 		{name: "newline", defaultValue: &valueFlatString{value: []rune("\n")}},
 		{name: "key_val_sep", defaultValue: &valueFlatString{value: []rune(": ")}}}},
+	&generalBuiltin{name: "manifestTomlEx", function: builtinManifestTomlEx, params: []generalBuiltinParameter{{name: "value"}, {name: "indent"}}},
 	&unaryBuiltin{name: "base64", function: builtinBase64, params: ast.Identifiers{"input"}},
 	&unaryBuiltin{name: "encodeUTF8", function: builtinEncodeUTF8, params: ast.Identifiers{"str"}},
 	&unaryBuiltin{name: "decodeUTF8", function: builtinDecodeUTF8, params: ast.Identifiers{"arr"}},
 	&generalBuiltin{name: "sort", function: builtinSort, params: []generalBuiltinParameter{{name: "arr"}, {name: "keyF", defaultValue: functionID}}},
+	&generalBuiltin{name: "minArray", function: builtinMinArray, params: []generalBuiltinParameter{{name: "arr"}, {name: "keyF", defaultValue: functionID}}},
 	&unaryBuiltin{name: "native", function: builtinNative, params: ast.Identifiers{"x"}},
+	&unaryBuiltin{name: "sum", function: builtinSum, params: ast.Identifiers{"arr"}},
+	&binaryBuiltin{name: "contains", function: builtinContains, params: ast.Identifiers{"arr", "elem"}},
 
 	// internal
 	&unaryBuiltin{name: "$objectFlatMerge", function: builtinUglyObjectFlatMerge, params: ast.Identifiers{"x"}},
